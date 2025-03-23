@@ -2,8 +2,9 @@
 
 from typing import Dict, List, Optional, Union, Any, Callable
 import os
-import shutil
+import json
 import logging
+from pathlib import Path
 
 import datasets
 import torch
@@ -16,96 +17,69 @@ from utils import DataArguments, logger
 def load_indosum_dataset(
     data_args: DataArguments,
     cache_dir: Optional[str] = None,
-    force_download: bool = True
+    force_download: bool = False
 ) -> DatasetDict:
     """
-    Load the indosum dataset from Hugging Face.
+    Load the indosum dataset from local files.
     
     Args:
         data_args: Configuration for data loading
-        cache_dir: Directory to cache the dataset
-        force_download: Whether to force a fresh download
+        cache_dir: Directory to cache the dataset (not used for local loading)
+        force_download: Whether to force a fresh download (not used for local loading)
         
     Returns:
         Dataset dictionary with train, validation, and test splits
     """
-    logger.info("Loading indosum dataset from Hugging Face...")
+    logger.info("Loading indosum dataset from local files...")
     
-    # Clean the dataset cache if forcing download
-    if force_download:
-        try:
-            # Get cache directory
-            from datasets.config import HF_DATASETS_CACHE
-            cache_path = os.path.join(HF_DATASETS_CACHE, "downloads")
-            
-            if os.path.exists(cache_path):
-                logger.info(f"Clearing dataset cache at {cache_path}")
-                # Remove all 'indosum' related files in cache
-                for root, dirs, files in os.walk(cache_path):
-                    if "indosum" in root.lower():
-                        logger.info(f"Removing {root}")
-                        shutil.rmtree(root, ignore_errors=True)
-            
-            # Also try to clear the extracted datasets
-            extracted_path = os.path.join(HF_DATASETS_CACHE, "extracted")
-            if os.path.exists(extracted_path):
-                for root, dirs, files in os.walk(extracted_path):
-                    if "indosum" in root.lower():
-                        logger.info(f"Removing {root}")
-                        shutil.rmtree(root, ignore_errors=True)
-        except Exception as e:
-            logger.warning(f"Error clearing dataset cache: {e}")
+    # Define the path to the dataset
+    data_dir = Path("data/indosum")
     
-    # Set the download mode
-    download_mode = "force_redownload" if force_download else None
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Dataset directory {data_dir} does not exist. Run create_mock_dataset.py first.")
+        
+    # Define paths to each split
+    file_paths = {
+        "train": data_dir / "train.jsonl",
+        "validation": data_dir / "validation.jsonl",
+        "test": data_dir / "test.jsonl"
+    }
+    
+    # Check if all files exist
+    missing_files = [str(path) for path, file_path in file_paths.items() if not file_path.exists()]
+    if missing_files:
+        raise FileNotFoundError(f"Missing dataset files: {', '.join(missing_files)}")
     
     try:
-        # Load the dataset using the Hugging Face datasets library
-        dataset = load_dataset(
-            "SEACrowd/indosum",  # Use the SEACrowd/indosum dataset
-            trust_remote_code=True,  # Required for SEACrowd datasets
-            cache_dir=cache_dir,
-            download_mode=download_mode,
-        )
+        # Load the dataset using datasets library from local files
+        dataset_dict = {}
         
+        for split, file_path in file_paths.items():
+            logger.info(f"Loading {split} split from {file_path}")
+            
+            # Use the datasets library to load from jsonl files
+            dataset = load_dataset('json', data_files=str(file_path), split='train')
+            
+            logger.info(f"Loaded {len(dataset)} examples for {split} split")
+            dataset_dict[split] = dataset
+        
+        # Create a DatasetDict
+        dataset = DatasetDict(dataset_dict)
         logger.info(f"Dataset loaded with splits: {dataset.keys()}")
         
-        # Rename columns if needed to match expected format
-        if "text" in dataset["train"].column_names and data_args.text_column != "text":
-            dataset = dataset.rename_column("text", data_args.text_column)
-        if "summary" in dataset["train"].column_names and data_args.summary_column != "summary":
-            dataset = dataset.rename_column("summary", data_args.summary_column)
+        # Ensure the column names match what we expect
+        for split in dataset.keys():
+            # Check if we need to rename columns to match expected format
+            if "document" in dataset[split].column_names and data_args.text_column != "document":
+                dataset[split] = dataset[split].rename_column("document", data_args.text_column)
+            if "summary" in dataset[split].column_names and data_args.summary_column != "summary":
+                dataset[split] = dataset[split].rename_column("summary", data_args.summary_column)
             
         return dataset
         
     except Exception as e:
-        logger.error(f"Failed to load dataset from Hugging Face: {e}")
-        
-        try:
-            # Fallback to using the datasets library directly on the GitHub URL
-            logger.info("Trying to load directly using the datasets library...")
-            
-            # Try loading directly using the datasets library's native functionality
-            dataset = load_dataset(
-                "seacrowd/indosum",  # Lowercase variant
-                trust_remote_code=True,
-                cache_dir=cache_dir,
-                download_mode=download_mode,
-            )
-            
-            logger.info(f"Successfully loaded dataset: {dataset.keys()}")
-            
-            # Rename columns if needed
-            if "text" in dataset["train"].column_names and data_args.text_column != "text":
-                dataset = dataset.rename_column("text", data_args.text_column)
-            if "summary" in dataset["train"].column_names and data_args.summary_column != "summary":
-                dataset = dataset.rename_column("summary", data_args.summary_column)
-                
-            return dataset
-            
-        except Exception as e2:
-            logger.error(f"Failed to load dataset from seacrowd: {e2}")
-            raise RuntimeError(f"Failed to load the dataset: {e}, then {e2}")
+        logger.error(f"Failed to load dataset from local files: {e}")
+        raise
 
 
 def preprocess_indosum_examples(

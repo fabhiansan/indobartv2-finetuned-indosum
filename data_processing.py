@@ -18,7 +18,8 @@ def load_indosum_dataset(
     data_args: DataArguments,
     cache_dir: Optional[str] = None,
     force_download: bool = False,
-    use_mock: bool = True
+    use_mock: bool = True,
+    base_dir: str = "/home/jupyter-23522029/dataset/indosum"
 ) -> DatasetDict:
     """
     Load the indosum dataset from local files.
@@ -28,6 +29,7 @@ def load_indosum_dataset(
         cache_dir: Directory to cache the dataset (not used for local loading)
         force_download: Whether to force a fresh download (not used for local loading)
         use_mock: Whether to use the mock dataset or the real dataset
+        base_dir: Directory containing the dataset Arrow files
         
     Returns:
         Dataset dictionary with train, validation, and test splits
@@ -35,7 +37,7 @@ def load_indosum_dataset(
     if use_mock:
         return load_indosum_jsonl(data_args, cache_dir)
     else:
-        return load_indosum_arrow()
+        return load_indosum_arrow(base_dir)
 
 
 def load_indosum_arrow(

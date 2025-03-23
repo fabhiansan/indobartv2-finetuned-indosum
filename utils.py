@@ -49,25 +49,29 @@ class DataArguments:
         default=None,
         metadata={"help": "The configuration name of the dataset to use (via the datasets library)"}
     )
-    text_column: Optional[str] = field(
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Where to store the downloaded datasets"}
+    )
+    text_column: str = field(
         default="document",
-        metadata={"help": "The name of the column in the datasets containing the input text"}
+        metadata={"help": "The name of the column in the datasets containing the documents"}
     )
     summary_column: Optional[str] = field(
         default="summary",
-        metadata={"help": "The name of the column in the datasets containing the summary"}
+        metadata={"help": "The name of the column in the datasets containing the summaries"}
     )
     max_input_length: int = field(
-        default=512,
-        metadata={"help": "The maximum total input sequence length after tokenization"}
+        default=1024,
+        metadata={"help": "Max length of the document input to the model"}
     )
     max_target_length: int = field(
         default=128,
-        metadata={"help": "The maximum total target sequence length after tokenization"}
+        metadata={"help": "Max length of the summary output from the model"}
     )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
-        metadata={"help": "The number of processes to use for the preprocessing"}
+        metadata={"help": "Number of processes for preprocessing"}
     )
 
 

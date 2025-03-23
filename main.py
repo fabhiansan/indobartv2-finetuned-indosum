@@ -84,18 +84,23 @@ def main() -> None:
         # Load and preprocess dataset
         logger.info("Loading dataset...")
         processed_dataset = None
-        cache_dir = data_args.cache_dir
+        cache_dir = model_args.cache_dir
         preprocessing_num_workers = data_args.preprocessing_num_workers
         
         try:
             # Load from the real Arrow dataset by default (use_mock=False)
-            raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=False)
+            raw_dataset = load_indosum_dataset(
+                data_args,
+                cache_dir=model_args.cache_dir,  
+                force_download=False,
+                use_mock=False
+            )
             
             processed_dataset = prepare_dataset(
                 raw_dataset,
                 tokenizer,
                 data_args,
-                preprocessing_num_workers
+                preprocessing_num_workers=data_args.preprocessing_num_workers
             )
             logger.info("Dataset loaded and preprocessed successfully")
         except Exception as e:
@@ -103,12 +108,17 @@ def main() -> None:
             logger.info("Trying to load mock dataset as fallback...")
             try:
                 # Try using mock dataset as fallback
-                raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=True)
+                raw_dataset = load_indosum_dataset(
+                    data_args,
+                    cache_dir=model_args.cache_dir,  
+                    force_download=False,
+                    use_mock=True
+                )
                 processed_dataset = prepare_dataset(
                     raw_dataset,
                     tokenizer,
                     data_args,
-                    preprocessing_num_workers
+                    preprocessing_num_workers=data_args.preprocessing_num_workers
                 )
                 logger.info("Mock dataset loaded successfully as fallback")
             except Exception as e2:
@@ -153,16 +163,21 @@ def main() -> None:
             # Load and preprocess dataset for evaluation
             logger.info("Loading dataset...")
             processed_dataset = None
-            cache_dir = data_args.cache_dir
             
             try:
                 # Load from the real Arrow dataset by default (use_mock=False)
-                raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=False)
+                raw_dataset = load_indosum_dataset(
+                    data_args,
+                    cache_dir=model_args.cache_dir,
+                    force_download=False,
+                    use_mock=False
+                )
                 
                 processed_dataset = prepare_dataset(
                     raw_dataset,
                     tokenizer,
                     data_args,
+                    preprocessing_num_workers=data_args.preprocessing_num_workers
                 )
                 logger.info("Dataset loaded and preprocessed successfully")
             except Exception as e:
@@ -170,11 +185,17 @@ def main() -> None:
                 logger.info("Trying to load mock dataset as fallback...")
                 try:
                     # Try using mock dataset as fallback
-                    raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=True)
+                    raw_dataset = load_indosum_dataset(
+                        data_args,
+                        cache_dir=model_args.cache_dir,
+                        force_download=False,
+                        use_mock=True
+                    )
                     processed_dataset = prepare_dataset(
                         raw_dataset,
                         tokenizer,
                         data_args,
+                        preprocessing_num_workers=data_args.preprocessing_num_workers
                     )
                     logger.info("Mock dataset loaded successfully as fallback")
                 except Exception as e2:

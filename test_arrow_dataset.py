@@ -30,6 +30,7 @@ def test_arrow_dataset() -> Dict[str, Any]:
         data_args = DataArguments(
             dataset_name="indosum",
             dataset_config_name=None,
+            dataset_cache_dir=None,  
             text_column="document",
             summary_column="summary"
         )

@@ -26,7 +26,7 @@ def load_indosum_dataset(
     
     Args:
         data_args: Configuration for data loading
-        cache_dir: Directory to cache the dataset (not used for local loading)
+        cache_dir: Directory to cache the dataset (can be None, will use data_args.dataset_cache_dir if provided)
         force_download: Whether to force a fresh download (not used for local loading)
         use_mock: Whether to use the mock dataset or the real dataset
         base_dir: Directory containing the dataset Arrow files
@@ -34,6 +34,10 @@ def load_indosum_dataset(
     Returns:
         Dataset dictionary with train, validation, and test splits
     """
+    # Use dataset_cache_dir from data_args if provided and cache_dir is None
+    if cache_dir is None and hasattr(data_args, 'dataset_cache_dir'):
+        cache_dir = data_args.dataset_cache_dir
+        
     if use_mock:
         return load_indosum_jsonl(data_args, cache_dir)
     else:

@@ -49,7 +49,7 @@ class DataArguments:
         default=None,
         metadata={"help": "The configuration name of the dataset to use (via the datasets library)"}
     )
-    cache_dir: Optional[str] = field(
+    dataset_cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Where to store the downloaded datasets"}
     )

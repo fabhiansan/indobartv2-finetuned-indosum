@@ -19,6 +19,19 @@ from rouge_score import rouge_scorer
 from utils import CustomTrainingArguments
 
 
+class CustomSeq2SeqTrainer(Seq2SeqTrainer):
+    """Custom Seq2SeqTrainer that skips tokenizer saving to avoid NotImplementedError."""
+    
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
+        """Override _save to skip tokenizer saving."""
+        # Save model
+        self._save_model(output_dir)
+        
+        # Save optimizer and scheduler
+        if self.args.should_save:
+            self._save_optimizer_and_scheduler(output_dir)
+
+
 class SummarizationTrainer:
     """Trainer class for sequence-to-sequence summarization tasks."""
     
@@ -52,8 +65,8 @@ class SummarizationTrainer:
         self.training_args = training_args
         self.compute_metrics_fn = compute_metrics_fn
         
-        # Create HF Trainer instance
-        self.trainer = Seq2SeqTrainer(
+        # Create custom HF Trainer instance that skips tokenizer saving
+        self.trainer = CustomSeq2SeqTrainer(
             model=model,
             args=training_args,
             train_dataset=train_dataset if training_args.do_train else None,

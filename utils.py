@@ -98,6 +98,11 @@ class CustomTrainingArguments(TrainingArguments):
         default=None,
         metadata={"help": "Generation configuration for text generation"}
     )
+    # Required for Seq2SeqTrainer prediction_step
+    predict_with_generate: bool = field(
+        default=True,
+        metadata={"help": "Whether to use generate to calculate generative metrics (ROUGE, BLEU)"}
+    )
 
 
 def set_seed(seed: int) -> None:

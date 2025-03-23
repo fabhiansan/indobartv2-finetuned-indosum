@@ -25,7 +25,7 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         """Override _save to skip tokenizer saving."""
         # Save model
-        self._save_model(output_dir)
+        self.save_model(output_dir)
         
         # Save optimizer and scheduler
         if self.args.should_save:

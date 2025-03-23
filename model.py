@@ -136,6 +136,40 @@ except ImportError:
             else:
                 return self._tokenizer.convert_tokens_to_string(tokens)
         
+        def decode(self, token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True, **kwargs):
+            """
+            Converts a sequence of ids in a string, using the tokenizer and vocabulary
+            with options to remove special tokens and clean up tokenization spaces.
+            
+            Args:
+                token_ids: List of tokenized input ids
+                skip_special_tokens: Whether to remove special tokens from decoded string
+                clean_up_tokenization_spaces: Whether to clean up spaces from tokenization
+                
+            Returns:
+                Decoded string
+            """
+            if not isinstance(token_ids, list):
+                token_ids = token_ids.tolist()
+                
+            # Convert token ids to tokens
+            tokens = [self._convert_id_to_token(i) for i in token_ids]
+            
+            # Filter special tokens if requested
+            if skip_special_tokens:
+                tokens = [token for token in tokens if token not in self.all_special_tokens]
+                
+            # Convert tokens to string
+            text = self.convert_tokens_to_string(tokens)
+            
+            # Clean up tokenization spaces if requested
+            if clean_up_tokenization_spaces:
+                text = text.replace(" ##", "")
+                text = text.replace("##", "")
+                text = text.strip()
+                
+            return text
+        
         def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> tuple:
             """Save the tokenizer vocabulary to a directory."""
             if not self.sp_model:

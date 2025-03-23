@@ -30,7 +30,8 @@ def load_indosum_dataset(
     dataset = load_dataset(
         data_args.dataset_name,
         data_args.dataset_config_name,
-        cache_dir=cache_dir
+        cache_dir=cache_dir,
+        trust_remote_code=True,  # Required for SEACrowd datasets
     )
     
     logger.info(f"Dataset loaded with splits: {dataset.keys()}")

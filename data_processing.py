@@ -1,4 +1,4 @@
-"""Data processing utilities for IndoBart training on indosum dataset."""
+"""Data processing utilities for IndoBart fine-tuning."""
 
 from typing import Dict, List, Optional, Union, Any, Callable
 import os
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import datasets
 import torch
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 from transformers import PreTrainedTokenizer
 
 from utils import DataArguments, logger
@@ -17,7 +17,8 @@ from utils import DataArguments, logger
 def load_indosum_dataset(
     data_args: DataArguments,
     cache_dir: Optional[str] = None,
-    force_download: bool = False
+    force_download: bool = False,
+    use_mock: bool = True
 ) -> DatasetDict:
     """
     Load the indosum dataset from local files.
@@ -26,11 +27,94 @@ def load_indosum_dataset(
         data_args: Configuration for data loading
         cache_dir: Directory to cache the dataset (not used for local loading)
         force_download: Whether to force a fresh download (not used for local loading)
+        use_mock: Whether to use the mock dataset or the real dataset
         
     Returns:
         Dataset dictionary with train, validation, and test splits
     """
-    logger.info("Loading indosum dataset from local files...")
+    if use_mock:
+        return load_indosum_jsonl(data_args, cache_dir)
+    else:
+        return load_indosum_arrow()
+
+
+def load_indosum_arrow(
+    base_dir: str = "/home/jupyter-23522029/dataset/indosum"
+) -> DatasetDict:
+    """
+    Load the indosum dataset from Arrow files.
+    
+    Args:
+        base_dir: Directory containing the dataset Arrow files
+        
+    Returns:
+        DatasetDict containing train, validation and test splits
+    """
+    logger.info(f"Loading indosum dataset from Arrow files in {base_dir}")
+    
+    train_dir = os.path.join(base_dir, "traindataset")
+    dev_dir = os.path.join(base_dir, "devdataset")
+    test_dir = os.path.join(base_dir, "testdataset")
+    
+    # Load each split
+    train_dataset = load_from_disk(train_dir)
+    logger.info(f"Loaded {len(train_dataset)} examples for train split")
+    
+    validation_dataset = load_from_disk(dev_dir)
+    logger.info(f"Loaded {len(validation_dataset)} examples for validation split")
+    
+    test_dataset = load_from_disk(test_dir)
+    logger.info(f"Loaded {len(test_dataset)} examples for test split")
+    
+    # Combine into a DatasetDict
+    dataset = DatasetDict({
+        "train": train_dataset,
+        "validation": validation_dataset,
+        "test": test_dataset
+    })
+    
+    # Check column names and rename if needed
+    # Inspect the first example to see column names
+    logger.info(f"Dataset features: {dataset['train'].features}")
+    
+    # Make sure we have the expected document/summary columns
+    if "document" not in dataset["train"].column_names:
+        # If common alternative names are present, rename them
+        if "article" in dataset["train"].column_names:
+            for split in dataset:
+                dataset[split] = dataset[split].rename_column("article", "document")
+        elif "text" in dataset["train"].column_names:
+            for split in dataset:
+                dataset[split] = dataset[split].rename_column("text", "document")
+    
+    if "summary" not in dataset["train"].column_names:
+        # If common alternative names are present, rename them
+        if "abstract" in dataset["train"].column_names:
+            for split in dataset:
+                dataset[split] = dataset[split].rename_column("abstract", "summary")
+        elif "headline" in dataset["train"].column_names:
+            for split in dataset:
+                dataset[split] = dataset[split].rename_column("headline", "summary")
+    
+    logger.info(f"Dataset loaded with splits: {dataset.keys()}")
+    return dataset
+
+
+def load_indosum_jsonl(
+    data_args: DataArguments,
+    cache_dir: Optional[str] = None
+) -> DatasetDict:
+    """
+    Load the indosum dataset from local JSONL files.
+    
+    Args:
+        data_args: Configuration for data loading
+        cache_dir: Cache directory for huggingface datasets
+        
+    Returns:
+        DatasetDict containing train, validation and test splits
+    """
+    logger.info(f"Loading indosum dataset from local files in data/indosum")
     
     # Define the path to the dataset
     data_dir = Path("data/indosum")

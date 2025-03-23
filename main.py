@@ -82,13 +82,38 @@ def main() -> None:
         model, tokenizer = load_model_and_tokenizer(model_args)
         
         # Load and preprocess dataset
-        dataset = load_indosum_dataset(data_args)
-        processed_dataset = prepare_dataset(
-            dataset=dataset,
-            tokenizer=tokenizer,
-            data_args=data_args,
-            preprocessing_num_workers=data_args.preprocessing_num_workers,
-        )
+        logger.info("Loading dataset...")
+        processed_dataset = None
+        cache_dir = data_args.cache_dir
+        preprocessing_num_workers = data_args.preprocessing_num_workers
+        
+        try:
+            # Load from the real Arrow dataset by default (use_mock=False)
+            raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=False)
+            
+            processed_dataset = prepare_dataset(
+                raw_dataset,
+                tokenizer,
+                data_args,
+                preprocessing_num_workers
+            )
+            logger.info("Dataset loaded and preprocessed successfully")
+        except Exception as e:
+            logger.error(f"Error loading dataset: {e}")
+            logger.info("Trying to load mock dataset as fallback...")
+            try:
+                # Try using mock dataset as fallback
+                raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=True)
+                processed_dataset = prepare_dataset(
+                    raw_dataset,
+                    tokenizer,
+                    data_args,
+                    preprocessing_num_workers
+                )
+                logger.info("Mock dataset loaded successfully as fallback")
+            except Exception as e2:
+                logger.error(f"Error loading mock dataset: {e2}")
+                raise RuntimeError("Failed to load both real and mock datasets") from e2
         
         # Get data collator
         data_collator = get_data_collator(tokenizer)
@@ -126,12 +151,35 @@ def main() -> None:
         
         if do_eval:
             # Load and preprocess dataset for evaluation
-            dataset = load_indosum_dataset(data_args)
-            processed_dataset = prepare_dataset(
-                dataset=dataset,
-                tokenizer=tokenizer,
-                data_args=data_args,
-            )
+            logger.info("Loading dataset...")
+            processed_dataset = None
+            cache_dir = data_args.cache_dir
+            
+            try:
+                # Load from the real Arrow dataset by default (use_mock=False)
+                raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=False)
+                
+                processed_dataset = prepare_dataset(
+                    raw_dataset,
+                    tokenizer,
+                    data_args,
+                )
+                logger.info("Dataset loaded and preprocessed successfully")
+            except Exception as e:
+                logger.error(f"Error loading dataset: {e}")
+                logger.info("Trying to load mock dataset as fallback...")
+                try:
+                    # Try using mock dataset as fallback
+                    raw_dataset = load_indosum_dataset(data_args, cache_dir, use_mock=True)
+                    processed_dataset = prepare_dataset(
+                        raw_dataset,
+                        tokenizer,
+                        data_args,
+                    )
+                    logger.info("Mock dataset loaded successfully as fallback")
+                except Exception as e2:
+                    logger.error(f"Error loading mock dataset: {e2}")
+                    raise RuntimeError("Failed to load both real and mock datasets") from e2
             
             # Evaluate the model using separate evaluation script
             eval_metrics = evaluate_model(

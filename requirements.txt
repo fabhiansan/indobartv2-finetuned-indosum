@@ -9,3 +9,4 @@ sentencepiece>=0.1.99
 accelerate>=0.20.0
 wandb>=0.15.0  # Optional for experiment tracking
 indobenchmark>=0.1.0  # Required for IndoNLGTokenizer
+requests>=2.28.0  # For direct dataset downloading

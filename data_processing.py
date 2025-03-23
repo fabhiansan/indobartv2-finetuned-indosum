@@ -3,6 +3,9 @@
 from typing import Dict, List, Optional, Union, Any, Callable
 import os
 import shutil
+import json
+import tempfile
+import requests
 
 import datasets
 import torch
@@ -10,6 +13,102 @@ from datasets import Dataset, DatasetDict, load_dataset
 from transformers import PreTrainedTokenizer
 
 from utils import DataArguments, logger
+
+
+def download_jsonl_file(url: str, output_path: str) -> None:
+    """
+    Download a JSONL file from a given URL.
+    
+    Args:
+        url: URL to download from
+        output_path: Path to save the file
+    """
+    try:
+        logger.info(f"Downloading {url} to {output_path}")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        logger.info(f"Successfully downloaded to {output_path}")
+    except Exception as e:
+        logger.error(f"Error downloading file from {url}: {e}")
+        raise
+
+
+def load_jsonl_file(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Load data from a JSONL file.
+    
+    Args:
+        file_path: Path to JSONL file
+        
+    Returns:
+        List of dictionaries, each representing a JSON object
+    """
+    data = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            try:
+                data.append(json.loads(line.strip()))
+            except json.JSONDecodeError as e:
+                logger.warning(f"Error decoding JSON line: {e}, skipping line")
+    
+    return data
+
+
+def direct_load_indosum() -> DatasetDict:
+    """
+    Load the indosum dataset directly from source files, without relying on the datasets library.
+    
+    Returns:
+        Dataset dictionary with train, validation, and test splits
+    """
+    logger.info("Directly loading indosum dataset from source files...")
+    
+    # Source URLs for the dataset files
+    urls = {
+        "train": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/train_preprocess.jsonl",
+        "validation": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/valid_preprocess.jsonl",
+        "test": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/test_preprocess.jsonl"
+    }
+    
+    # Create a temporary directory to store the files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        logger.info(f"Created temporary directory: {temp_dir}")
+        
+        # Download each dataset file
+        file_paths = {}
+        for split, url in urls.items():
+            file_path = os.path.join(temp_dir, f"{split}.jsonl")
+            download_jsonl_file(url, file_path)
+            file_paths[split] = file_path
+        
+        # Load the data from each file
+        datasets_dict = {}
+        for split, file_path in file_paths.items():
+            data = load_jsonl_file(file_path)
+            
+            # Convert to the format required by the Dataset class
+            formatted_data = {
+                "document": [],
+                "summary": []
+            }
+            
+            for item in data:
+                if "Document" in item and "Summary" in item:
+                    formatted_data["document"].append(item["Document"])
+                    formatted_data["summary"].append(item["Summary"])
+                else:
+                    logger.warning(f"Skipping item with missing fields: {item}")
+            
+            # Create a Dataset object
+            datasets_dict[split] = Dataset.from_dict(formatted_data)
+            logger.info(f"Loaded {len(datasets_dict[split])} examples for {split} split")
+    
+    return DatasetDict(datasets_dict)
 
 
 def load_indosum_dataset(
@@ -29,6 +128,15 @@ def load_indosum_dataset(
         Dataset dictionary with train, validation, and test splits
     """
     logger.info(f"Loading dataset: {data_args.dataset_name}")
+    
+    # Try the direct loading method first (most reliable)
+    try:
+        logger.info("Attempting to load indosum dataset directly from source files...")
+        dataset = direct_load_indosum()
+        logger.info(f"Successfully loaded dataset directly: {dataset}")
+        return dataset
+    except Exception as e:
+        logger.warning(f"Failed to load dataset directly: {e}")
     
     # Clean the dataset cache if forcing download
     if force_download:
@@ -75,7 +183,7 @@ def load_indosum_dataset(
     
     # Try direct download from GitHub repository
     try:
-        logger.info("Trying to load dataset from GitHub repository...")
+        logger.info("Trying to load dataset with datasets library from GitHub repository...")
         # Alternative approach: directly download from GitHub
         dataset = load_dataset(
             "json",

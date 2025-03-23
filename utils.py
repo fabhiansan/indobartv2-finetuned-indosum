@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 
 import numpy as np
 import torch
@@ -84,6 +84,19 @@ class CustomTrainingArguments(TrainingArguments):
     hub_model_id: Optional[str] = field(
         default=None,
         metadata={"help": "Model identifier for uploading to HF Hub"}
+    )
+    # Generation config parameters required by Seq2SeqTrainer
+    generation_max_length: Optional[int] = field(
+        default=128,
+        metadata={"help": "Maximum length for generation"}
+    )
+    generation_num_beams: Optional[int] = field(
+        default=4,
+        metadata={"help": "Number of beams for beam search during generation"}
+    )
+    generation_config: Optional[Dict] = field(
+        default=None,
+        metadata={"help": "Generation configuration for text generation"}
     )
 
 

@@ -1,6 +1,8 @@
 """Data processing utilities for IndoBart training on indosum dataset."""
 
 from typing import Dict, List, Optional, Union, Any, Callable
+import os
+import shutil
 
 import datasets
 import torch
@@ -12,7 +14,8 @@ from utils import DataArguments, logger
 
 def load_indosum_dataset(
     data_args: DataArguments,
-    cache_dir: Optional[str] = None
+    cache_dir: Optional[str] = None,
+    force_download: bool = True
 ) -> DatasetDict:
     """
     Load the indosum dataset from the Hugging Face Hub.
@@ -20,23 +23,97 @@ def load_indosum_dataset(
     Args:
         data_args: Configuration for data loading
         cache_dir: Directory to cache the dataset
+        force_download: Whether to force a fresh download
         
     Returns:
         Dataset dictionary with train, validation, and test splits
     """
     logger.info(f"Loading dataset: {data_args.dataset_name}")
     
-    # Load dataset from Hugging Face Hub
-    dataset = load_dataset(
-        data_args.dataset_name,
-        data_args.dataset_config_name,
-        cache_dir=cache_dir,
-        trust_remote_code=True,  # Required for SEACrowd datasets
-    )
+    # Clean the dataset cache if forcing download
+    if force_download:
+        try:
+            # Get cache directory
+            from datasets.config import HF_DATASETS_CACHE
+            cache_path = os.path.join(HF_DATASETS_CACHE, "downloads")
+            
+            if os.path.exists(cache_path):
+                logger.info(f"Clearing dataset cache at {cache_path}")
+                # Remove all 'indosum' related files in cache
+                for root, dirs, files in os.walk(cache_path):
+                    if "indosum" in root:
+                        logger.info(f"Removing {root}")
+                        shutil.rmtree(root, ignore_errors=True)
+            
+            # Also try to clear the extracted datasets
+            extracted_path = os.path.join(HF_DATASETS_CACHE, "extracted")
+            if os.path.exists(extracted_path):
+                for root, dirs, files in os.walk(extracted_path):
+                    if "indosum" in root:
+                        logger.info(f"Removing {root}")
+                        shutil.rmtree(root, ignore_errors=True)
+                        
+        except Exception as e:
+            logger.warning(f"Error clearing dataset cache: {e}")
     
-    logger.info(f"Dataset loaded with splits: {dataset.keys()}")
+    # Try to load directly as a packaged dataset
+    try:
+        logger.info("Attempting to load dataset from IndoNLP package (backup method)...")
+        from indobenchmark.datasets import IndoSum
+        indobenchmark_dataset = IndoSum(tokenizer=None)
+        train = Dataset.from_dict(indobenchmark_dataset.data["train"])
+        validation = Dataset.from_dict(indobenchmark_dataset.data["valid"])
+        test = Dataset.from_dict(indobenchmark_dataset.data["test"])
+        
+        return DatasetDict({
+            "train": train,
+            "validation": validation,
+            "test": test
+        })
+    except Exception as e:
+        logger.warning(f"Failed to load dataset from IndoNLP package: {e}")
     
-    return dataset
+    # Try direct download from GitHub repository
+    try:
+        logger.info("Trying to load dataset from GitHub repository...")
+        # Alternative approach: directly download from GitHub
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/train_preprocess.jsonl",
+                "validation": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/valid_preprocess.jsonl",
+                "test": "https://raw.githubusercontent.com/IndoNLP/indonlu/master/dataset/indosum/test_preprocess.jsonl"
+            },
+            cache_dir=cache_dir,
+        )
+        
+        # Rename columns to match expected format
+        if "Document" in dataset["train"].column_names:
+            dataset = dataset.rename_column("Document", data_args.text_column)
+        if "Summary" in dataset["train"].column_names:
+            dataset = dataset.rename_column("Summary", data_args.summary_column)
+            
+        logger.info(f"Successfully loaded dataset from GitHub: {dataset}")
+        return dataset
+    except Exception as e:
+        logger.warning(f"Failed to load dataset from GitHub: {e}")
+    
+    # Fall back to original SEACrowd dataset as last resort
+    logger.info("Trying to load dataset from SEACrowd as last resort...")
+    try:
+        dataset = load_dataset(
+            data_args.dataset_name,
+            data_args.dataset_config_name,
+            cache_dir=cache_dir,
+            trust_remote_code=True,  # Required for SEACrowd datasets
+            download_mode="force_redownload" if force_download else None,
+        )
+        
+        logger.info(f"Dataset loaded with splits: {dataset.keys()}")
+        return dataset
+    except Exception as e:
+        logger.error(f"Failed to load dataset: {e}")
+        raise
 
 
 def preprocess_indosum_examples(

@@ -139,11 +139,16 @@ except ImportError:
         def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> tuple:
             """Save the tokenizer vocabulary to a directory."""
             if not self.sp_model:
-                return self._tokenizer.save_vocabulary(save_directory, filename_prefix)
+                if hasattr(self._tokenizer, 'save_vocabulary'):
+                    return self._tokenizer.save_vocabulary(save_directory, filename_prefix)
+                else:
+                    logger.warning("Fallback tokenizer does not implement save_vocabulary")
+                    # Return empty tuple to avoid NotImplementedError
+                    return ()
                 
             if not os.path.isdir(save_directory):
                 logger.error(f"Vocabulary path ({save_directory}) should be a directory")
-                return
+                return ()
             
             out_vocab_file = os.path.join(
                 save_directory, 
@@ -153,6 +158,11 @@ except ImportError:
             if os.path.abspath(self.vocab_file) != os.path.abspath(out_vocab_file) and os.path.exists(self.vocab_file):
                 import shutil
                 shutil.copyfile(self.vocab_file, out_vocab_file)
+                logger.info(f"SentencePiece model saved to {out_vocab_file}")
+            elif not os.path.exists(self.vocab_file):
+                logger.warning(f"Cannot save vocabulary: source vocab file {self.vocab_file} does not exist")
+                # Return empty tuple to avoid NotImplementedError
+                return ()
             
             return (out_vocab_file,)
 

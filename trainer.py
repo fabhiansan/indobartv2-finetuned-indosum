@@ -2,22 +2,21 @@
 
 import os
 from typing import Dict, List, Optional, Any, Callable, Union
-
 import numpy as np
-import torch
-from datasets import Dataset, DatasetDict
+import logging
+
+from datasets import Dataset
 from transformers import (
-    AutoModelForSeq2SeqLM,
     PreTrainedTokenizer,
     Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    TrainerCallback,
-    TrainerState,
-    TrainerControl,
+    Seq2SeqTrainingArguments as TrainingArguments,
+    AutoModelForSeq2SeqLM,
+    EvalPrediction,
 )
-from transformers.trainer_utils import EvalPrediction
 
-from utils import CustomTrainingArguments, logger, postprocess_text
+from rouge_score import rouge_scorer
+
+from utils import CustomTrainingArguments
 
 
 class SummarizationTrainer:
@@ -64,62 +63,54 @@ class SummarizationTrainer:
             compute_metrics=compute_metrics_fn,
         )
     
-    def train(self) -> Optional[Dict[str, float]]:
+    def train(self):
         """
         Run model training.
         
         Returns:
             Training results
         """
-        logger.info("Starting training...")
+        train_result = None
+        if self.training_args.do_train:
+            train_result = self.trainer.train()
+            # Save the model
+            self.trainer.save_model()
+            
+            # Save metrics
+            metrics = train_result.metrics
+            self.trainer.log_metrics("train", metrics)
+            self.trainer.save_metrics("train", metrics)
+            
+            # Save state
+            self.trainer.save_state()
         
-        train_result = self.trainer.train()
-        metrics = train_result.metrics
-        self.trainer.save_model()
-        self.trainer.log_metrics("train", metrics)
-        self.trainer.save_metrics("train", metrics)
-        self.trainer.save_state()
-        
-        return metrics
+        return train_result
     
-    def evaluate(self) -> Dict[str, float]:
+    def evaluate(self):
         """
         Evaluate the model on the evaluation dataset.
         
         Returns:
             Evaluation metrics
         """
-        logger.info("Evaluating model...")
+        eval_results = None
+        if self.training_args.do_eval:
+            eval_results = self.trainer.evaluate()
+            
+            # Log and save metrics
+            self.trainer.log_metrics("eval", eval_results)
+            self.trainer.save_metrics("eval", eval_results)
         
-        metrics = self.trainer.evaluate(
-            max_length=self.training_args.generation_max_length,
-            num_beams=self.training_args.generation_num_beams,
-            metric_key_prefix="eval"
-        )
-        
-        self.trainer.log_metrics("eval", metrics)
-        self.trainer.save_metrics("eval", metrics)
-        
-        return metrics
+        return eval_results
     
-    def push_to_hub(self, model_id: Optional[str] = None) -> None:
+    def push_to_hub(self, model_id: Optional[str] = None):
         """
         Push the model to Hugging Face Hub.
         
         Args:
             model_id: Model identifier for the Hub
         """
-        hub_model_id = model_id or self.training_args.hub_model_id
-        
-        if not hub_model_id:
-            raise ValueError(
-                "To push to the Hub, you need to specify a hub_model_id via"
-                " --hub_model_id or when calling push_to_hub()"
-            )
-        
-        logger.info(f"Pushing model to Hugging Face Hub as: {hub_model_id}")
-        self.trainer.push_to_hub(hub_model_id=hub_model_id)
-        logger.info("Model successfully pushed to Hub!")
+        self.trainer.push_to_hub(model_id=model_id)
 
 
 def get_compute_metrics_fn(
@@ -134,9 +125,8 @@ def get_compute_metrics_fn(
     Returns:
         Function that computes metrics from model predictions
     """
-    import evaluate
-    
-    rouge_metric = evaluate.load("rouge")
+    # Initialize rouge scorer directly instead of using evaluate.load
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     
     def compute_metrics(eval_pred: EvalPrediction) -> Dict[str, float]:
         """
@@ -150,25 +140,35 @@ def get_compute_metrics_fn(
         """
         predictions, labels = eval_pred.predictions, eval_pred.label_ids
         
-        # Decode generated summaries
-        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        
-        # Replace -100 in the labels as we can't decode them
+        # Replace -100 with pad token id
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        
+        # Decode predictions and labels
+        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
         
-        # Postprocess text for metric calculation
-        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
+        # Some simple post-processing
+        decoded_preds = [pred.strip() for pred in decoded_preds]
+        decoded_labels = [label.strip() for label in decoded_labels]
         
         # Calculate ROUGE scores
-        result = rouge_metric.compute(
-            predictions=decoded_preds,
-            references=decoded_labels,
-            use_stemmer=True,
-        )
+        rouge_results = {}
+        for i, (pred, label) in enumerate(zip(decoded_preds, decoded_labels)):
+            scores = scorer.score(label, pred)
+            for metric, score in scores.items():
+                if f"{metric}_precision" not in rouge_results:
+                    rouge_results[f"{metric}_precision"] = []
+                    rouge_results[f"{metric}_recall"] = []
+                    rouge_results[f"{metric}_fmeasure"] = []
+                
+                rouge_results[f"{metric}_precision"].append(score.precision)
+                rouge_results[f"{metric}_recall"].append(score.recall)
+                rouge_results[f"{metric}_fmeasure"].append(score.fmeasure)
         
-        # Extract the median scores
-        result = {k: round(v * 100, 2) for k, v in result.items()}
+        # Compute averages
+        result = {}
+        for key, values in rouge_results.items():
+            result[key] = np.mean(values)
         
         return result
     

@@ -55,11 +55,47 @@ def load_tokenizer() -> IndoNLGTokenizer:
     logger.info("Loading IndoNLGTokenizer directly...")
     
     try:
-        tokenizer = IndoNLGTokenizer.from_pretrained("indobenchmark/indobart-v2", trust_remote_code=True)
-        logger.info("Successfully loaded IndoNLGTokenizer from indobenchmark/indobart-v2")
+        # First, try to get the actual SentencePiece model file
+        try:
+            import huggingface_hub
+            # Download sentencepiece model explicitly
+            spm_path = huggingface_hub.hf_hub_download(
+                repo_id="indobenchmark/indobart-v2",
+                filename="sentencepiece.bpe.model",
+                cache_dir=None
+            )
+            logger.info(f"Found sentencepiece model at: {spm_path}")
+            
+            # Initialize with the explicit sentencepiece model path
+            tokenizer = IndoNLGTokenizer(
+                vocab_file=spm_path,
+                trust_remote_code=True
+            )
+            logger.info("Successfully loaded IndoNLGTokenizer with explicit SentencePiece model")
+        except Exception as e:
+            logger.warning(f"Error downloading SentencePiece model: {e}")
+            
+            # Fallback to loading from the model class directly
+            logger.info("Attempting to load tokenizer from indobart-v2 model...")
+            tokenizer = IndoNLGTokenizer.from_pretrained(
+                "indobenchmark/indobart-v2", 
+                trust_remote_code=True
+            )
+            logger.info("Successfully loaded IndoNLGTokenizer from pretrained model")
+        
+        # Verify tokenizer has decode method with out-of-range protection
+        if hasattr(tokenizer, 'decode'):
+            test_ids = [0, 1, 2, 3, 40000, 999999]  # Intentionally include an out-of-range ID
+            try:
+                tokenizer.decode(test_ids)
+                logger.info("Tokenizer decode method successfully handles out-of-range token IDs")
+            except Exception as e:
+                logger.warning(f"Tokenizer decode method test failed: {e}")
+                logger.info("This is expected if using an older version - our custom implementation should handle this")
+        
         return tokenizer
     except Exception as e:
-        logger.error(f"Error loading tokenizer from pretrained: {e}")
+        logger.error(f"Error loading tokenizer: {e}")
         raise
 
 
@@ -98,6 +134,54 @@ def create_summary_report(all_metrics: List[Dict[str, Any]], report_dir: str) ->
     
     logger.info(f"Saved summary report to {summary_file} and {html_file}")
     return summary_file
+
+
+def evaluate_checkpoint(
+    checkpoint_path: str,
+    data_args: DataArguments,
+    tokenizer: IndoNLGTokenizer,
+    report_dir: str,
+    device: torch.device,
+    num_beams: int = 4,
+    max_length: int = 512
+) -> Dict[str, float]:
+    """Evaluate a single checkpoint."""
+    logger.info(f"Evaluating checkpoint: {checkpoint_path}")
+    
+    try:
+        # Load the model with explicit model class to avoid model type mismatch
+        from transformers import MBartForConditionalGeneration
+        model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
+        model.to(device)
+        model.eval()
+        
+        # Load and prepare dataset
+        dataset = load_indosum_dataset(data_args.validation_file or data_args.test_file)
+        eval_dataset = prepare_dataset(dataset, tokenizer, data_args, model.config, is_training=False)
+        
+        # Evaluate model
+        metrics = evaluate_model(
+            model=model,
+            tokenizer=tokenizer,
+            eval_dataset=eval_dataset,
+            data_args=data_args,
+            output_path=os.path.join(report_dir, os.path.basename(checkpoint_path)),
+            num_beams=num_beams,
+            max_length=max_length
+        )
+        
+        # Save metrics
+        save_metrics(metrics, checkpoint_path, report_dir)
+        
+        # Free memory
+        del model
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        
+        return metrics
+    except Exception as e:
+        logger.error(f"Error evaluating checkpoint {checkpoint_path}: {e}")
+        # Return empty metrics to indicate failure
+        return {"error": str(e)}
 
 
 def main():
@@ -177,26 +261,16 @@ def main():
         logger.info(f"Evaluating checkpoint: {checkpoint_path}")
         
         try:
-            # Load model weights using MBartForConditionalGeneration
-            from transformers import MBartForConditionalGeneration
-            
-            logger.info(f"Loading model from {checkpoint_path}...")
-            model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
-            model.to(args.device)
-            
-            # Evaluate model
-            metrics = evaluate_model(
-                model=model,
-                tokenizer=tokenizer,
-                eval_dataset=processed_dataset["validation"],
-                data_args=data_args,
-                output_path=os.path.join(args.report_dir, os.path.basename(checkpoint_path)),
+            # Evaluate checkpoint
+            metrics = evaluate_checkpoint(
+                checkpoint_path,
+                data_args,
+                tokenizer,
+                args.report_dir,
+                torch.device(args.device),
                 num_beams=args.num_beams,
-                max_length=args.max_length,
+                max_length=args.max_length
             )
-            
-            # Save metrics
-            save_metrics(metrics, checkpoint_path, args.report_dir)
             
             # Add checkpoint info
             metrics["checkpoint"] = os.path.basename(checkpoint_path)
@@ -205,7 +279,6 @@ def main():
             successful_evaluations += 1
             
             # Free memory
-            del model
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
             
         except Exception as e:

@@ -138,10 +138,11 @@ def create_summary_report(all_metrics: List[Dict[str, Any]], report_dir: str) ->
 
 def evaluate_checkpoint(
     checkpoint_path: str,
-    data_args: DataArguments,
     tokenizer: IndoNLGTokenizer,
+    eval_dataset: Any,
     report_dir: str,
     device: torch.device,
+    data_args: Optional[DataArguments] = None,
     num_beams: int = 4,
     max_length: int = 512
 ) -> Dict[str, float]:
@@ -155,11 +156,7 @@ def evaluate_checkpoint(
         model.to(device)
         model.eval()
         
-        # Load and prepare dataset
-        dataset = load_indosum_dataset(data_args.validation_file or data_args.test_file)
-        eval_dataset = prepare_dataset(dataset, tokenizer, data_args, model.config, is_training=False)
-        
-        # Evaluate model
+        # Evaluate model using the already processed dataset
         metrics = evaluate_model(
             model=model,
             tokenizer=tokenizer,
@@ -226,28 +223,27 @@ def main():
     
     # Load dataset
     try:
-        logger.info("Loading indosum dataset...")
+        logger.info("Loading indosum test dataset...")
         raw_dataset = load_indosum_dataset(
-            data_args,
-            cache_dir=None,
-            force_download=False,
-            use_mock=args.use_mock
+            data_args.test_file,  # Only load test file
+            cache_dir=None
         )
-        logger.info("Successfully loaded dataset")
+        logger.info(f"Successfully loaded test dataset with {len(raw_dataset)} examples")
     except Exception as e:
         logger.error(f"Error loading dataset: {e}")
         return
     
     # Process dataset only once with our tokenizer
     try:
-        logger.info("Preprocessing dataset with tokenizer...")
+        logger.info("Preprocessing test dataset with tokenizer...")
         processed_dataset = prepare_dataset(
             raw_dataset,
             tokenizer,
             data_args,
+            is_training=False,  # Explicitly mark as not training data
             preprocessing_num_workers=None
         )
-        logger.info("Dataset preprocessing complete")
+        logger.info("Test dataset preprocessing complete")
     except Exception as e:
         logger.error(f"Error preprocessing dataset: {e}")
         return
@@ -264,10 +260,11 @@ def main():
             # Evaluate checkpoint
             metrics = evaluate_checkpoint(
                 checkpoint_path,
-                data_args,
                 tokenizer,
+                processed_dataset,
                 args.report_dir,
                 torch.device(args.device),
+                data_args=data_args,
                 num_beams=args.num_beams,
                 max_length=args.max_length
             )

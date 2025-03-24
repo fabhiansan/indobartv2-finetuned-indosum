@@ -212,15 +212,44 @@ def evaluate_checkpoint(
         os.makedirs(checkpoint_report_dir, exist_ok=True)
         
         # Evaluate model using the already processed dataset
-        metrics = evaluate_model(
-            model=model,
-            tokenizer=tokenizer,
-            eval_dataset=eval_dataset,
-            data_args=data_args,
-            output_path=checkpoint_report_dir,
-            num_beams=num_beams,
-            max_length=max_length
-        )
+        try:
+            # Try monkey patching the tokenizer's sp_model to catch the exact error location
+            original_decode = tokenizer.sp_model.decode
+            def safe_decode(piece_ids):
+                try:
+                    return original_decode(piece_ids)
+                except Exception as e:
+                    logger.error(f"SentencePiece decode error with piece IDs: {piece_ids}")
+                    logger.error(f"Error: {e}")
+                    raise
+            
+            # Replace with our safe version that logs details
+            tokenizer.sp_model.decode = safe_decode
+            
+            metrics = evaluate_model(
+                model=model,
+                tokenizer=tokenizer,
+                eval_dataset=eval_dataset,
+                data_args=data_args,
+                output_path=checkpoint_report_dir,
+                num_beams=num_beams,
+                max_length=max_length
+            )
+            
+            # Restore original function
+            tokenizer.sp_model.decode = original_decode
+        
+        except Exception as eval_error:
+            import traceback
+            logger.error(f"Full traceback for {checkpoint_path}:")
+            logger.error(traceback.format_exc())
+            
+            # Try to extract line-by-line info
+            tb_parts = traceback.format_exception(type(eval_error), eval_error, eval_error.__traceback__)
+            for part in tb_parts:
+                logger.error(part.strip())
+            
+            raise eval_error
         
         # Save metrics
         save_metrics(metrics, checkpoint_path, report_dir)

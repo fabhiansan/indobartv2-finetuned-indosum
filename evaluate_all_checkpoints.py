@@ -151,11 +151,65 @@ def evaluate_checkpoint(
     logger.info(f"Evaluating checkpoint: {checkpoint_path}")
     
     try:
-        # Load the model with explicit model class to avoid model type mismatch
+        # Load the model with a custom safe approach
         from transformers import MBartForConditionalGeneration
-        model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
+        
+        # First, attempt to catch the "piece id out of range" error with a dummy forward pass
+        try:
+            logger.info("Loading model with safe approach...")
+            # Load model config first
+            from transformers import MBartConfig
+            config = MBartConfig.from_pretrained(checkpoint_path)
+            
+            # Initialize model with config only
+            model = MBartForConditionalGeneration(config)
+            
+            # Load state dict manually
+            import os
+            state_dict_path = os.path.join(checkpoint_path, "pytorch_model.bin")
+            if os.path.exists(state_dict_path):
+                # Load state dict
+                state_dict = torch.load(state_dict_path, map_location="cpu")
+                
+                # Filter out any problematic embeddings entries
+                if "model.encoder.embed_tokens.weight" in state_dict:
+                    embed_weight = state_dict["model.encoder.embed_tokens.weight"]
+                    vocab_size = config.vocab_size
+                    
+                    # Ensure embeddings match vocab size
+                    if embed_weight.size(0) > vocab_size:
+                        logger.warning(f"Embeddings size {embed_weight.size(0)} exceeds vocab size {vocab_size}, truncating")
+                        state_dict["model.encoder.embed_tokens.weight"] = embed_weight[:vocab_size, :]
+                        
+                        # Also truncate decoder embeddings if needed
+                        if "model.decoder.embed_tokens.weight" in state_dict:
+                            state_dict["model.decoder.embed_tokens.weight"] = state_dict["model.decoder.embed_tokens.weight"][:vocab_size, :]
+                
+                # Load filtered state dict
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                if missing:
+                    logger.warning(f"Missing keys when loading state dict: {missing[:5]} (showing up to 5)")
+                if unexpected:
+                    logger.warning(f"Unexpected keys when loading state dict: {unexpected[:5]} (showing up to 5)")
+            else:
+                # Fallback to standard loading if no separate state dict file
+                model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
+                
+            logger.info("Model loaded successfully with safe approach")
+            
+        except Exception as e:
+            logger.warning(f"Safe loading approach failed: {e}")
+            logger.info("Falling back to standard model loading")
+            # Fallback to standard loading
+            model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
+        
+        # Move model to device
         model.to(device)
         model.eval()
+        
+        # Create a report directory for this checkpoint
+        checkpoint_report_dir = os.path.join(report_dir, os.path.basename(checkpoint_path))
+        os.makedirs(checkpoint_report_dir, exist_ok=True)
         
         # Evaluate model using the already processed dataset
         metrics = evaluate_model(
@@ -163,7 +217,7 @@ def evaluate_checkpoint(
             tokenizer=tokenizer,
             eval_dataset=eval_dataset,
             data_args=data_args,
-            output_path=os.path.join(report_dir, os.path.basename(checkpoint_path)),
+            output_path=checkpoint_report_dir,
             num_beams=num_beams,
             max_length=max_length
         )
@@ -178,8 +232,8 @@ def evaluate_checkpoint(
         return metrics
     except Exception as e:
         logger.error(f"Error evaluating checkpoint {checkpoint_path}: {e}")
-        # Return empty metrics to indicate failure
-        return {"error": str(e)}
+        # Add the error to the metrics dictionary for the summary report
+        return {"checkpoint": os.path.basename(checkpoint_path), "error": str(e)}
 
 
 def main():

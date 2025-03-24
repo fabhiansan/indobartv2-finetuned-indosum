@@ -151,7 +151,17 @@ def create_summary_report(all_metrics: List[Dict[str, Any]], report_dir: str) ->
 def main():
     """Main function to evaluate multiple checkpoints."""
     parser = HfArgumentParser((ModelArguments, DataArguments, CustomTrainingArguments, EvalArguments))
+    
+    # Set system arguments for required fields
+    import sys
+    if "--output_dir" not in sys.argv:
+        sys.argv.extend(["--output_dir", "./temp_output"])
+    
     model_args, data_args, training_args, eval_args = parser.parse_args_into_dataclasses()
+    
+    # Override output_dir with report_dir if needed
+    if training_args.output_dir == "./temp_output":
+        training_args.output_dir = eval_args.report_dir
     
     # Ensure report directory exists
     report_dir = prepare_report_dir(eval_args.report_dir)

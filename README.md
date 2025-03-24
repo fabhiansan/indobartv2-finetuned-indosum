@@ -55,6 +55,7 @@ To evaluate all checkpoints in a directory and generate comprehensive reports:
 python evaluate_checkpoints.py \
   --checkpoints_dir ./output \
   --report_dir ./reports \
+  --output_dir ./reports \
   --dataset_use_mock False
 ```
 

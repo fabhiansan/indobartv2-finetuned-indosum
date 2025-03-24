@@ -172,6 +172,28 @@ def main():
         logger.error(f"No checkpoints found in {eval_args.checkpoints_dir}")
         return
     
+    # Load the tokenizer first from the main model directory
+    logger.info(f"Loading tokenizer from main model directory: {eval_args.checkpoints_dir}")
+    try:
+        # Try to load tokenizer directly from main directory
+        from model import IndoNLGTokenizer
+        from transformers import BartForConditionalGeneration
+        
+        # Try the main directory first
+        model_path = eval_args.checkpoints_dir
+        tokenizer = IndoNLGTokenizer.from_pretrained(model_path)
+        logger.info("Successfully loaded tokenizer from main model directory")
+    except Exception as e:
+        logger.warning(f"Could not load tokenizer from main directory: {e}")
+        logger.info("Trying to load tokenizer from pretrained model...")
+        try:
+            # Try loading the pretrained tokenizer
+            tokenizer = IndoNLGTokenizer.from_pretrained("indobenchmark/indobart-v2")
+            logger.info("Successfully loaded tokenizer from pretrained model")
+        except Exception as e2:
+            logger.error(f"Failed to load tokenizer: {e2}")
+            return
+    
     # Load dataset once
     try:
         logger.info("Loading dataset...")
@@ -186,6 +208,14 @@ def main():
         logger.error(f"Error loading dataset: {e}")
         return
     
+    # Prepare dataset once with our tokenizer
+    processed_dataset = prepare_dataset(
+        raw_dataset,
+        tokenizer, 
+        data_args,
+        preprocessing_num_workers=data_args.preprocessing_num_workers
+    )
+    
     # Track all metrics for summary report
     all_metrics = []
     
@@ -194,22 +224,15 @@ def main():
         logger.info(f"Evaluating checkpoint: {checkpoint_path}")
         
         try:
-            # Load model and tokenizer from checkpoint
-            model, tokenizer = get_model_for_evaluation(checkpoint_path)
+            # Load just the model from checkpoint
+            logger.info(f"Loading model from: {checkpoint_path}")
+            model = BartForConditionalGeneration.from_pretrained(checkpoint_path)
             model.to(eval_args.device)
-            
-            # Prepare dataset for this checkpoint
-            processed_dataset = prepare_dataset(
-                raw_dataset,
-                tokenizer,
-                data_args,
-                preprocessing_num_workers=data_args.preprocessing_num_workers
-            )
             
             # Evaluate model
             metrics = evaluate_model(
                 model=model,
-                tokenizer=tokenizer,
+                tokenizer=tokenizer,  # Use the tokenizer we loaded earlier
                 eval_dataset=processed_dataset["validation"],
                 data_args=data_args,
                 output_path=os.path.join(report_dir, os.path.basename(checkpoint_path)),

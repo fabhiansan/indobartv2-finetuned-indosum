@@ -20,7 +20,7 @@ from transformers import PreTrainedTokenizer
 
 # Import project modules
 from main import evaluate_model
-from data_processing import load_indosum_dataset, prepare_dataset
+from data_processing import load_indosum_arrow, prepare_dataset
 from utils import DataArguments, set_seed
 from model import IndoNLGTokenizer
 
@@ -186,6 +186,8 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate all checkpoints in a directory")
     parser.add_argument("--output_dir", required=True, help="Directory containing model checkpoints")
     parser.add_argument("--report_dir", default="./reports", help="Directory to save evaluation reports")
+    parser.add_argument("--dataset_dir", default="/home/jupyter-23522029/dataset/indosum", 
+                       help="Directory containing the dataset Arrow files")
     parser.add_argument("--use_mock", action="store_true", help="Use mock dataset instead of real dataset")
     parser.add_argument("--num_beams", type=int, default=4, help="Number of beams for generation")
     parser.add_argument("--max_length", type=int, default=128, help="Maximum output length")
@@ -224,10 +226,12 @@ def main():
     # Load dataset
     try:
         logger.info("Loading indosum test dataset...")
-        raw_dataset = load_indosum_dataset(
-            data_args.test_file,  # Only load test file
-            cache_dir=None
+        # Use the load_indosum_arrow function to load only the test dataset
+        all_datasets = load_indosum_arrow(
+            base_dir=args.dataset_dir
         )
+        # Extract only the test split
+        raw_dataset = all_datasets["test"]
         logger.info(f"Successfully loaded test dataset with {len(raw_dataset)} examples")
     except Exception as e:
         logger.error(f"Error loading dataset: {e}")

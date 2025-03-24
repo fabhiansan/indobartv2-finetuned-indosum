@@ -149,11 +149,35 @@ except ImportError:
             Returns:
                 Decoded string
             """
+            # Handle the fallback case first - use the underlying tokenizer
+            if not self.sp_model:
+                return self._tokenizer.decode(
+                    token_ids, 
+                    skip_special_tokens=skip_special_tokens,
+                    clean_up_tokenization_spaces=clean_up_tokenization_spaces,
+                    **kwargs
+                )
+                
+            # For SentencePiece-based tokenization:
             if not isinstance(token_ids, list):
                 token_ids = token_ids.tolist()
+            
+            # Filter out any token IDs that are out of range to avoid "piece id is out of range" error
+            vocab_size = self.sp_model.get_piece_size()
+            filtered_ids = []
+            for id in token_ids:
+                # Skip any token IDs that are out of range
+                if 0 <= id < vocab_size:
+                    filtered_ids.append(id)
+                else:
+                    logger.debug(f"Skipping out-of-range token id: {id} (vocab size: {vocab_size})")
+            
+            # If all tokens were filtered out, return empty string
+            if not filtered_ids:
+                return ""
                 
             # Convert token ids to tokens
-            tokens = [self._convert_id_to_token(i) for i in token_ids]
+            tokens = [self._convert_id_to_token(i) for i in filtered_ids]
             
             # Filter special tokens if requested
             if skip_special_tokens:

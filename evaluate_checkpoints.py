@@ -174,25 +174,49 @@ def main():
     
     # Load the tokenizer first from the main model directory
     logger.info(f"Loading tokenizer from main model directory: {eval_args.checkpoints_dir}")
+    
+    # Variable to hold the base model class we'll use for loading checkpoints
+    base_model = None
+    
     try:
         # Try to load tokenizer directly from main directory
-        from model import IndoNLGTokenizer
-        from transformers import BartForConditionalGeneration
+        from model import IndoNLGTokenizer, load_model_and_tokenizer
         
-        # Try the main directory first
+        # Try loading from the output directory first
+        logger.info("Attempting to load model and tokenizer from original training...")
         model_path = eval_args.checkpoints_dir
-        tokenizer = IndoNLGTokenizer.from_pretrained(model_path)
-        logger.info("Successfully loaded tokenizer from main model directory")
+        model_args.model_name = model_path  # Set model path to load from
+        model, tokenizer = load_model_and_tokenizer(model_args)
+        # Save the model class for later checkpoint loading
+        base_model = model.__class__
+        logger.info(f"Successfully loaded tokenizer and model architecture from training output (model type: {model.__class__.__name__})")
     except Exception as e:
-        logger.warning(f"Could not load tokenizer from main directory: {e}")
+        logger.warning(f"Could not load tokenizer from training output: {e}")
         logger.info("Trying to load tokenizer from pretrained model...")
         try:
-            # Try loading the pretrained tokenizer
-            tokenizer = IndoNLGTokenizer.from_pretrained("indobenchmark/indobart-v2")
+            # Try loading the pretrained tokenizer directly
+            # Use our custom IndoNLGTokenizer which has the fixed decode method
+            from model import IndoNLGTokenizer
+            from transformers import MBartForConditionalGeneration
+            
+            # Load the original pretrained model and tokenizer
+            tokenizer = IndoNLGTokenizer.from_pretrained("indobenchmark/indobart-v2", trust_remote_code=True)
+            # Just load this to get model structure, we'll replace weights later
+            temp_model = MBartForConditionalGeneration.from_pretrained("indobenchmark/indobart-v2")
+            base_model = MBartForConditionalGeneration  # Save the class for later checkpoint loading
             logger.info("Successfully loaded tokenizer from pretrained model")
         except Exception as e2:
-            logger.error(f"Failed to load tokenizer: {e2}")
-            return
+            logger.error(f"Failed to load tokenizer with IndoNLGTokenizer: {e2}")
+            logger.info("Falling back to MBartTokenizer...")
+            try:
+                from transformers import MBartTokenizer, MBartForConditionalGeneration
+                # Last resort - try standard MBartTokenizer
+                tokenizer = MBartTokenizer.from_pretrained("indobenchmark/indobart-v2", trust_remote_code=True)
+                base_model = MBartForConditionalGeneration
+                logger.info("Successfully loaded MBartTokenizer")
+            except Exception as e3:
+                logger.error(f"Failed to load tokenizer: {e3}")
+                return
     
     # Load dataset once
     try:
@@ -226,7 +250,14 @@ def main():
         try:
             # Load just the model from checkpoint
             logger.info(f"Loading model from: {checkpoint_path}")
-            model = BartForConditionalGeneration.from_pretrained(checkpoint_path)
+            
+            if base_model is not None:
+                model = base_model.from_pretrained(checkpoint_path)
+            else:
+                # Fallback to MBartForConditionalGeneration if we couldn't determine the model class
+                from transformers import MBartForConditionalGeneration
+                model = MBartForConditionalGeneration.from_pretrained(checkpoint_path)
+                
             model.to(eval_args.device)
             
             # Evaluate model

@@ -17,6 +17,7 @@ import torch
 import pandas as pd
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
+from datasets import DatasetDict
 
 # Import project modules
 from main import evaluate_model
@@ -240,13 +241,22 @@ def main():
     # Process dataset only once with our tokenizer
     try:
         logger.info("Preprocessing test dataset with tokenizer...")
+        # Convert the test dataset to a DatasetDict with both train and validation splits
+        # This is needed because prepare_dataset expects a DatasetDict with both splits
+        dataset_dict = DatasetDict({
+            "train": raw_dataset,  # We use the test dataset for both
+            "validation": raw_dataset
+        })
+        
         processed_dataset = prepare_dataset(
-            raw_dataset,
+            dataset_dict,
             tokenizer,
             data_args,
-            is_training=False,  # Explicitly mark as not training data
             preprocessing_num_workers=None
         )
+        
+        # We only need the validation split for evaluation
+        processed_dataset = processed_dataset["validation"]
         logger.info("Test dataset preprocessing complete")
     except Exception as e:
         logger.error(f"Error preprocessing dataset: {e}")

@@ -84,9 +84,18 @@ def generate_summaries(
             )
         
         # Decode generated summaries
-        decoded_summaries = tokenizer.batch_decode(
-            generated_ids, skip_special_tokens=True
-        )
+        decoded_summaries = []
+        for ids in generated_ids:
+            try:
+                # Use our safer decode implementation to handle out-of-range token IDs
+                text = tokenizer.decode(ids, skip_special_tokens=True)
+                decoded_summaries.append(text)
+            except Exception as e:
+                logger.warning(f"Error during decoding: {e}")
+                # Fallback to a simpler approach if there's an error
+                filtered_ids = [id for id in ids if 0 <= id < tokenizer.vocab_size]
+                text = tokenizer.decode(filtered_ids, skip_special_tokens=True)
+                decoded_summaries.append(text)
         
         generated_summaries.extend(decoded_summaries)
         reference_summaries.extend(targets)

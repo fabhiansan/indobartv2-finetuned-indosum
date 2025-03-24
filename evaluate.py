@@ -85,17 +85,56 @@ def generate_summaries(
         
         # Decode generated summaries
         decoded_summaries = []
-        for ids in generated_ids:
+        for batch_idx, ids in enumerate(generated_ids):
             try:
+                # Log the token IDs for debugging
+                logger.info(f"Decoding batch item {batch_idx}, token IDs: {ids[:10]}... (showing first 10)")
+                
+                # Check vocab size
+                if hasattr(tokenizer, 'sp_model'):
+                    vocab_size = tokenizer.sp_model.get_piece_size()
+                    logger.info(f"Tokenizer vocabulary size: {vocab_size}")
+                    
+                    # Check for out-of-range IDs
+                    invalid_ids = [id.item() for id in ids if id.item() >= vocab_size or id.item() < 0]
+                    if invalid_ids:
+                        logger.warning(f"Found {len(invalid_ids)} invalid token IDs: {invalid_ids[:5]}... (showing up to 5)")
+                
                 # Use our safer decode implementation to handle out-of-range token IDs
                 text = tokenizer.decode(ids, skip_special_tokens=True)
+                logger.info(f"Successfully decoded batch item {batch_idx}: '{text[:50]}...' (showing first 50 chars)")
                 decoded_summaries.append(text)
             except Exception as e:
-                logger.warning(f"Error during decoding: {e}")
+                logger.warning(f"Error during decoding batch item {batch_idx}: {e}")
                 # Fallback to a simpler approach if there's an error
-                filtered_ids = [id for id in ids if 0 <= id < tokenizer.vocab_size]
-                text = tokenizer.decode(filtered_ids, skip_special_tokens=True)
-                decoded_summaries.append(text)
+                try:
+                    # Convert tensor to list if needed
+                    if torch.is_tensor(ids):
+                        ids_list = ids.tolist()
+                    else:
+                        ids_list = list(ids)
+                    
+                    # Get vocab size
+                    vocab_size = 32000  # Default fallback
+                    if hasattr(tokenizer, 'sp_model'):
+                        vocab_size = tokenizer.sp_model.get_piece_size()
+                    elif hasattr(tokenizer, 'vocab_size'):
+                        vocab_size = tokenizer.vocab_size
+                    
+                    logger.info(f"Using fallback decoding with vocab size: {vocab_size}")
+                    
+                    # Filter out-of-range IDs
+                    filtered_ids = [id for id in ids_list if 0 <= id < vocab_size]
+                    logger.info(f"Filtered {len(ids_list) - len(filtered_ids)} invalid token IDs")
+                    
+                    # Decode with filtered IDs
+                    text = tokenizer.decode(filtered_ids, skip_special_tokens=True)
+                    logger.info(f"Fallback decoding successful: '{text[:50]}...' (showing first 50 chars)")
+                    decoded_summaries.append(text)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback decoding also failed: {fallback_error}")
+                    # If all else fails, add an empty string to maintain alignment
+                    decoded_summaries.append("")
         
         generated_summaries.extend(decoded_summaries)
         reference_summaries.extend(targets)

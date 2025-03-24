@@ -245,190 +245,73 @@ except ImportError:
             self.sp_model.Load(self.vocab_file)
 
         def decode(self, token_ids, skip_special_tokens=False, **kwargs):
-            """
-            Converts a sequence of ids (integer) in a string, using the tokenizer and vocabulary.
-            We filter out of range token IDs which could cause piece id errors in SentencePiece.
-            """
-            if isinstance(token_ids, int):
-                token_ids = [token_ids]
+            """Decode the given token IDs to a string, handling out-of-range token IDs."""
+            try:
+                if token_ids is None:
+                    return ""
                 
-            if isinstance(token_ids, list):
-                # Filter out of range token IDs to avoid "piece id out of range" errors
+                # Convert to list if we got a tensor
+                if isinstance(token_ids, torch.Tensor):
+                    token_ids = token_ids.tolist()
+                
+                # Get the vocab size
                 vocab_size = self.sp_model.get_piece_size()
+                
+                # Check for invalid IDs
+                invalid_ids = [id for id in token_ids if id >= vocab_size or id < 0]
+                if invalid_ids:
+                    logger.warning(f"Found {len(invalid_ids)} invalid token IDs out of {len(token_ids)}")
+                    logger.warning(f"First few invalid IDs: {invalid_ids[:5]}")
+                
+                # Filter out token IDs that are out of range
                 filtered_ids = []
                 for id in token_ids:
-                    # Keep special tokens and valid SentencePiece tokens
-                    if id in self.special_ids_to_tokens or (0 <= id < vocab_size):
+                    if 0 <= id < vocab_size:
                         filtered_ids.append(id)
                     else:
-                        logger.debug(f"Filtering out token ID {id} which is out of range (0, {vocab_size})")
+                        logger.warning(f"Filtered out token ID {id} (vocab size is {vocab_size})")
                 
-                # Convert filtered IDs to tokens
-                tokens = self.convert_ids_to_tokens(filtered_ids, skip_special_tokens=skip_special_tokens)
+                # If all tokens were filtered, use the UNK token
+                if not filtered_ids and token_ids:
+                    logger.warning("All token IDs were invalid, using UNK token instead")
+                    filtered_ids = [self.unk_token_id]
                 
-                # Join tokens to form the output string
-                text = "".join(tokens)
+                # Log summary of filtering
+                if len(filtered_ids) != len(token_ids):
+                    logger.info(f"Filtered {len(token_ids) - len(filtered_ids)} out of {len(token_ids)} token IDs")
                 
-                # Apply SentencePiece post-processing (replace underscore with space, etc.)
-                text = text.replace(" ", "").replace(SPIECE_UNDERLINE, " ")
-                
+                # Decode the filtered token IDs
+                text = self._decode_with_spmodel(filtered_ids, skip_special_tokens)
+                logger.info(f"Successfully decoded to text: '{text[:50]}...' (first 50 chars)")
                 return text
-            else:
-                # Handle other input types by using the parent's decode method with our filtered token IDs
-                outputs = super().decode(token_ids, skip_special_tokens=skip_special_tokens)
-                return outputs.replace(' ', '').replace('▁', ' ')
-    
-    class IndoNLGTokenizer(PreTrainedTokenizer):
-        """
-        Custom implementation of the IndoNLGTokenizer for IndoBart models.
-        Uses SentencePiece for tokenization, with a fallback to BartTokenizer.
-        """
-        
-        vocab_files_names = {"vocab_file": "sentencepiece.bpe.model"}
-        
-        def __init__(
-            self,
-            vocab_file=None,
-            bos_token="<s>",
-            eos_token="</s>",
-            sep_token="</s>",
-            cls_token="<s>",
-            unk_token="<unk>",
-            pad_token="<pad>",
-            mask_token="<mask>",
-            **kwargs
-        ):
-            super().__init__(
-                bos_token=bos_token,
-                eos_token=eos_token,
-                sep_token=sep_token,
-                cls_token=cls_token,
-                unk_token=unk_token,
-                pad_token=pad_token,
-                mask_token=mask_token,
-                **kwargs,
-            )
-            
-            # Try to find the SentencePiece model file
-            if vocab_file:
-                self.vocab_file = vocab_file
-            else:
-                # Fallback to BartTokenizer
-                self._tokenizer = AutoTokenizer.from_pretrained(
-                    "facebook/bart-base", 
-                    bos_token=bos_token,
-                    eos_token=eos_token,
-                    sep_token=sep_token,
-                    cls_token=cls_token,
-                    unk_token=unk_token,
-                    pad_token=pad_token,
-                    mask_token=mask_token
-                )
-                
-                # Try to download the model file
+            except Exception as e:
+                logger.error(f"Error in decode method: {e}")
+                if not token_ids:
+                    return ""
                 try:
-                    import huggingface_hub
-                    # Download sentencepiece model
-                    spm_path = huggingface_hub.hf_hub_download(
-                        repo_id="indobenchmark/indobart-v2",
-                        filename="sentencepiece.bpe.model",
-                        cache_dir=kwargs.get("cache_dir", None)
-                    )
-                    self.vocab_file = spm_path
-                except Exception as e:
-                    logger.warning(f"Failed to download sentencepiece model: {e}")
-                    self.vocab_file = None
-            
-            # Initialize SentencePiece if the model file is available
-            if self.vocab_file and os.path.exists(self.vocab_file):
-                self.sp_model = spm.SentencePieceProcessor()
-                self.sp_model.Load(self.vocab_file)
-            else:
-                self.sp_model = None
-                logger.warning(
-                    "No SentencePiece model file found. Using BartTokenizer as fallback."
-                )
+                    # Last-resort fallback: decode token by token
+                    logger.warning("Attempting fallback token-by-token decoding")
+                    result = []
+                    for id in token_ids:
+                        try:
+                            if 0 <= id < self.sp_model.get_piece_size():
+                                piece = self.sp_model.id_to_piece(id)
+                                result.append(piece)
+                            else:
+                                logger.warning(f"Skipping invalid token ID {id}")
+                        except:
+                            logger.warning(f"Error decoding token ID {id}, skipping")
+                    
+                    text = "".join(result)
+                    logger.info(f"Fallback decoding successful: '{text[:50]}...' (first 50 chars)")
+                    return text
+                except Exception as fallback_error:
+                    logger.error(f"Fallback decoding also failed: {fallback_error}")
+                    return ""  # Return empty string as last resort
         
-        def get_vocab(self):
-            if self.sp_model:
-                vocab = {self.sp_model.id_to_piece(i): i for i in range(self.sp_model.get_piece_size())}
-                return vocab
-            else:
-                return self._tokenizer.get_vocab()
-                
-        @property
-        def vocab_size(self):
-            if self.sp_model:
-                return self.sp_model.get_piece_size()
-            else:
-                return self._tokenizer.vocab_size
-        
-        def _tokenize(self, text):
-            if self.sp_model:
-                return self.sp_model.encode(text, out_type=str)
-            else:
-                return self._tokenizer.tokenize(text)
-        
-        def _convert_token_to_id(self, token):
-            if self.sp_model:
-                return self.sp_model.piece_to_id(token)
-            else:
-                return self._tokenizer.convert_tokens_to_ids(token)
-        
-        def _convert_id_to_token(self, index):
-            if self.sp_model:
-                return self.sp_model.id_to_piece(index)
-            else:
-                return self._tokenizer.convert_ids_to_tokens(index)
-        
-        def convert_tokens_to_string(self, tokens):
-            if self.sp_model:
-                return self.sp_model.decode(tokens)
-            else:
-                return self._tokenizer.convert_tokens_to_string(tokens)
-        
-        def decode(self, token_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True, **kwargs):
-            """
-            Converts a sequence of ids in a string, using the tokenizer and vocabulary
-            with options to remove special tokens and clean up tokenization spaces.
-            
-            Args:
-                token_ids: List of tokenized input ids
-                skip_special_tokens: Whether to remove special tokens from decoded string
-                clean_up_tokenization_spaces: Whether to clean up spaces from tokenization
-                
-            Returns:
-                Decoded string
-            """
-            # Handle the fallback case first - use the underlying tokenizer
-            if not self.sp_model:
-                return self._tokenizer.decode(
-                    token_ids, 
-                    skip_special_tokens=skip_special_tokens,
-                    clean_up_tokenization_spaces=clean_up_tokenization_spaces,
-                    **kwargs
-                )
-                
-            # For SentencePiece-based tokenization:
-            if not isinstance(token_ids, list):
-                token_ids = token_ids.tolist()
-            
-            # Filter out any token IDs that are out of range to avoid "piece id is out of range" error
-            vocab_size = self.sp_model.get_piece_size()
-            filtered_ids = []
-            for id in token_ids:
-                # Skip any token IDs that are out of range
-                if 0 <= id < vocab_size:
-                    filtered_ids.append(id)
-                else:
-                    logger.debug(f"Skipping out-of-range token id: {id} (vocab size: {vocab_size})")
-            
-            # If all tokens were filtered out, return empty string
-            if not filtered_ids:
-                return ""
-                
+        def _decode_with_spmodel(self, token_ids, skip_special_tokens):
             # Convert token ids to tokens
-            tokens = [self._convert_id_to_token(i) for i in filtered_ids]
+            tokens = [self._convert_id_to_token(i) for i in token_ids]
             
             # Filter special tokens if requested
             if skip_special_tokens:
@@ -438,12 +321,15 @@ except ImportError:
             text = self.convert_tokens_to_string(tokens)
             
             # Clean up tokenization spaces if requested
-            if clean_up_tokenization_spaces:
-                text = text.replace(" ##", "")
-                text = text.replace("##", "")
-                text = text.strip()
-                
+            text = text.replace(" ", "").replace(SPIECE_UNDERLINE, " ")
+            
             return text
+        
+        def convert_tokens_to_string(self, tokens):
+            if self.sp_model:
+                return self.sp_model.decode(tokens)
+            else:
+                return self._tokenizer.convert_tokens_to_string(tokens)
         
         def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> tuple:
             """Save the tokenizer vocabulary to a directory."""

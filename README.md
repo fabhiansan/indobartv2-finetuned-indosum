@@ -12,6 +12,7 @@ This project fine-tunes the [indobenchmark/indobart-v2](https://huggingface.co/i
 ├── model.py
 ├── trainer.py
 ├── evaluate.py
+├── evaluate_checkpoints.py
 ├── utils.py
 └── main.py
 ```
@@ -46,6 +47,22 @@ python main.py --do_eval --model_path ./output
 # Push to Hub
 python main.py --model_path ./output --push_to_hub --hub_model_id your-username/indobart-indosum
 ```
+
+### Batch Checkpoint Evaluation
+
+To evaluate all checkpoints in a directory and generate comprehensive reports:
+```bash
+python evaluate_checkpoints.py \
+  --checkpoints_dir ./output \
+  --report_dir ./reports \
+  --dataset_use_mock False
+```
+
+This utility will:
+1. Find all checkpoint directories in the specified folder
+2. Evaluate each checkpoint against the validation dataset
+3. Generate individual metrics JSON files for each checkpoint
+4. Create a summary report (CSV and HTML) comparing all checkpoints
 
 ## Configuration
 

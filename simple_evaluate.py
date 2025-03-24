@@ -34,38 +34,80 @@ from model import IndoNLGTokenizer
 
 def load_indosum_dataset(dataset_dir: str) -> Dataset:
     """
-    Load only the test split of the IndoSum dataset from Arrow files.
+    Load the test split of the IndoSum dataset.
     
     Args:
-        dataset_dir: Directory containing the Arrow files
+        dataset_dir: Directory containing the dataset files
         
     Returns:
         Test dataset
     """
-    logger.info(f"Loading indosum dataset from Arrow files in {dataset_dir}")
+    logger.info(f"Loading indosum dataset from {dataset_dir}")
     
+    # First try loading raw text dataset
     try:
-        # Load test dataset from Arrow file
-        test_path = os.path.join(dataset_dir, "test")
-        test_dataset = load_dataset("arrow", data_files=None, split="train", data_dir=test_path)
-        logger.info(f"Loaded {len(test_dataset)} examples for test split")
-        
-        # Verify dataset format
-        if "article" in test_dataset.column_names and "summary" in test_dataset.column_names:
-            logger.info(f"Dataset features: {test_dataset.features}")
-            return test_dataset
-        else:
-            # Try alternative column names
-            if "document" in test_dataset.column_names:
-                column_mapping = {"document": "article"}
-                test_dataset = test_dataset.rename_columns(column_mapping)
+        # Try regular dataset structure with json files
+        if os.path.exists(os.path.join(dataset_dir, "test.jsonl")):
+            logger.info(f"Found test.jsonl file, loading directly")
+            test_dataset = load_dataset('json', data_files=os.path.join(dataset_dir, "test.jsonl"), split='train')
+            logger.info(f"Loaded {len(test_dataset)} examples from test.jsonl")
             
-            logger.info(f"Final dataset features: {test_dataset.features}")
+            # Check column names and verify dataset format
+            logger.info(f"Dataset features: {test_dataset.features}")
+            
+            # Make sure we have standard column names
+            if "document" in test_dataset.column_names and "summary" not in test_dataset.column_names:
+                column_mapping = {"document": "article"}
+                test_dataset = test_dataset.rename_column("document", "article")
+                logger.info(f"Renamed 'document' column to 'article'")
+            
+            return test_dataset
+        
+        # Try arrow dataset in test directory
+        elif os.path.exists(os.path.join(dataset_dir, "test")):
+            logger.info(f"Found test directory, loading Arrow dataset")
+            test_path = os.path.join(dataset_dir, "test")
+            test_dataset = load_dataset("arrow", data_files=None, split="train", data_dir=test_path)
+            logger.info(f"Loaded {len(test_dataset)} examples from test directory")
+            
+            # Verify dataset format
+            logger.info(f"Dataset features: {test_dataset.features}")
+            
+            # Make sure we have standard column names
+            if "document" in test_dataset.column_names and "summary" not in test_dataset.column_names:
+                test_dataset = test_dataset.rename_column("document", "article")
+                logger.info(f"Renamed 'document' column to 'article'")
+            
+            return test_dataset
+        
+        # Check for already processed dataset with model inputs
+        elif os.path.exists(os.path.join(dataset_dir, "testdataset")):
+            logger.info(f"Found testdataset directory, loading preprocessed Arrow dataset")
+            test_path = os.path.join(dataset_dir, "testdataset")
+            test_dataset = load_dataset("arrow", data_files=None, split="train", data_dir=test_path)
+            logger.info(f"Loaded {len(test_dataset)} examples from testdataset directory")
+            
+            # Check if this is already a processed dataset with model inputs
+            if all(col in test_dataset.column_names for col in ["input_ids", "attention_mask", "labels"]):
+                logger.info("Dataset is already preprocessed with input_ids, attention_mask, and labels")
+                return test_dataset
+            
+            # Fall back to normal processing if not
+            logger.info(f"Dataset features: {test_dataset.features}")
             return test_dataset
             
     except Exception as e:
         logger.error(f"Error loading dataset: {e}")
-        raise
+        
+        # Try loading directly from the Hugging Face hub as a last resort
+        try:
+            logger.info("Attempting to load indosum dataset from Hugging Face hub")
+            dataset = load_dataset("indonlp/indosum", split="test")
+            logger.info(f"Successfully loaded {len(dataset)} examples from Hugging Face hub")
+            return dataset
+        except Exception as e2:
+            logger.error(f"Failed to load from Hugging Face hub: {e2}")
+            raise e  # Raise the original error
 
 
 def safe_decode(tokenizer, token_ids, skip_special_tokens=True):
@@ -389,6 +431,7 @@ def main():
     parser.add_argument("--max_length", type=int, default=128, help="Maximum generation length")
     parser.add_argument("--min_length", type=int, default=10, help="Minimum generation length")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for generation")
+    parser.add_argument("--skip_preprocessing", action="store_true", help="Skip dataset preprocessing")
     args = parser.parse_args()
     
     # Create output directory
@@ -421,19 +464,26 @@ def main():
         logger.error(f"Error loading dataset: {e}")
         return
     
-    # Prepare dataset
-    try:
-        logger.info("Preparing dataset for evaluation")
-        prepared_dataset = prepare_dataset(
-            test_dataset,
-            tokenizer,
-            max_input_length=1024,
-            max_target_length=args.max_length
-        )
-        logger.info("Dataset preparation complete")
-    except Exception as e:
-        logger.error(f"Error preparing dataset: {e}")
-        return
+    # Check if dataset is already preprocessed
+    is_preprocessed = all(col in test_dataset.column_names for col in ["input_ids", "attention_mask", "labels"])
+    
+    # Prepare dataset if needed
+    if is_preprocessed:
+        logger.info("Using already preprocessed dataset with input_ids, attention_mask, and labels")
+        prepared_dataset = test_dataset
+    else:
+        try:
+            logger.info("Preparing dataset for evaluation")
+            prepared_dataset = prepare_dataset(
+                test_dataset,
+                tokenizer,
+                max_input_length=1024,
+                max_target_length=args.max_length
+            )
+            logger.info("Dataset preparation complete")
+        except Exception as e:
+            logger.error(f"Error preparing dataset: {e}")
+            return
     
     # Find checkpoints to evaluate
     if args.checkpoint:

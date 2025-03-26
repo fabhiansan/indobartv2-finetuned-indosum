@@ -9,16 +9,6 @@ from transformers import (
     BartConfig,
     BartForConditionalGeneration,
     PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-from transformers.tokenization_utils_base import BatchEncoding
-from transformers.utils import (
-    PaddingStrategy,
-    TensorType,
-    is_tf_available,
-    is_torch_available,
-    logging,
-    to_py_obj,
 )
 
 from utils import ModelArguments, logger
